@@ -102,6 +102,68 @@ app.get('/', async (req, res) => {
     }
 });
 
+/**
+ * Order history (for the shop owner / staff dashboard)
+ *
+ * Returns orders with their items.- Order Service database.
+ */
+app.get('/api/orders', async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            `SELECT
+                o.id AS order_id,
+                o.customer_name,
+                o.total_amount,
+                o.created_at,
+                oi.id AS order_item_id,
+                oi.product_id,
+                oi.quantity,
+                oi.unit_price
+            FROM orders o
+            LEFT JOIN order_items oi ON oi.order_id = o.id
+            ORDER BY o.created_at DESC, oi.id ASC`
+        );
+
+        // Convert the flat JOIN result into a nested JSON structure:
+        // [ { id, customer_name, total_amount, created_at, items: [...] }, ... ]
+        const ordersById = new Map();
+
+        for (const row of rows) {
+            if (!ordersById.has(row.order_id)) {
+                ordersById.set(row.order_id, {
+                    id: row.order_id,
+                    customer_name: row.customer_name,
+                    total_amount: Number(row.total_amount),
+                    created_at: row.created_at,
+                    items: []
+                });
+            }
+
+            // If there are no items for an order ,
+            // LEFT JOIN will return nulls
+            if (row.order_item_id) {
+                ordersById.get(row.order_id).items.push({
+                    id: row.order_item_id,
+                    product_id: row.product_id,
+                    quantity: row.quantity,
+                    unit_price: Number(row.unit_price)
+                });
+            }
+        }
+
+        return res.status(200).json({
+            success: true,
+            orders: Array.from(ordersById.values())
+        });
+    } catch (err) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch order history.',
+            error: err.message
+        });
+    }
+});
+
 
 app.post('/api/orders', async (req, res) => {
     const validation = validateCreateOrderPayload(req.body);
