@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "Coffee shop order microservice",
   "dependencies": {
+    "axios": "^1.12.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
