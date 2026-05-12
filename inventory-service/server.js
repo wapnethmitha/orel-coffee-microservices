@@ -23,6 +23,12 @@ app.get('/api/products', (req, res) => {
     });
 });
 
+app.post('/api/products/validate-stock', (req, res) => {
+    const { items } = req.body; 
+    // Logic to check DB for stovk
+    res.status(200).json({ success: true, message: "Stock is available" });
+});
+
 // Start the server
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
