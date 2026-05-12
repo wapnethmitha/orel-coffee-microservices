@@ -67,6 +67,19 @@ function validateCreateOrderPayload(body) {
     return { ok: true };
 }
 
+//Fetches product details from the Inventory Service.
+
+async function fetchInventoryProducts() {
+    const response = await axios.get(`${INVENTORY_SERVICE_URL}/api/products`, { timeout: 5000 });
+    return Array.isArray(response.data) ? response.data : [];
+}
+
+function roundTo2(amount) {
+    // Simple rounding for currency-like numbers.
+    // (For production, many teams use integer cents or a decimal library.)
+    return Math.round(Number(amount) * 100) / 100;
+}
+
 // Health check
 // - Confirms the service is running
 // - Verifies DB connectivity via a lightweight query
@@ -114,18 +127,100 @@ app.post('/api/orders', async (req, res) => {
     }));
 
     try {
-        const response = await axios.post(
+        // 1) Validate/deduct stock first (core scenario).
+        // If this fails, we DO NOT create an order record.
+        const stockResponse = await axios.post(
             `${INVENTORY_SERVICE_URL}/api/products/validate-stock`,
             { items: inventoryItems },
             { timeout: 5000 }
         );
 
-        // Inventory validated (and later will deduct). For Part 2, we stop here.
-        return res.status(200).json({
-            success: true,
-            message: 'Stock validated successfully. (Order persistence will be added in Part 3.)',
-            inventory: response.data
+        // 2) Pull product prices from Inventory Service so we can compute totals.
+        // This is intentionally a separate call because Inventory is the source of truth
+        // for product catalog data.
+        const products = await fetchInventoryProducts();
+        const productById = new Map(products.map((p) => [Number(p.id), p]));
+
+        const enrichedItems = req.body.items.map((item) => {
+            const product = productById.get(item.product_id);
+            const unitPrice = product ? Number(product.price) : NaN;
+
+            return {
+                product_id: item.product_id,
+                quantity: item.quantity,
+                unit_price: unitPrice,
+                line_total: roundTo2(unitPrice * item.quantity)
+            };
         });
+
+        // If any product_id is unknown, fail fast (better than inserting partial/incorrect orders).
+        const missingPrice = enrichedItems.find((i) => !Number.isFinite(i.unit_price));
+        if (missingPrice) {
+            return res.status(400).json({
+                success: false,
+                message: `Unknown product_id or missing price for product_id=${missingPrice.product_id}.`
+            });
+        }
+
+        const totalAmount = roundTo2(enrichedItems.reduce((sum, i) => sum + i.line_total, 0));
+
+        // 3) Persist the order in a single DB transaction.
+        // Either ALL rows are saved (orders + order_items) or NONE are.
+        let connection;
+        try {
+            connection = await pool.getConnection();
+            await connection.beginTransaction();
+
+            const customerName = req.body.customer_name || null;
+
+            const [orderResult] = await connection.query(
+                'INSERT INTO orders (customer_name, total_amount) VALUES (?, ?)',
+                [customerName, totalAmount]
+            );
+
+            const orderId = orderResult.insertId;
+
+            for (const item of enrichedItems) {
+                await connection.query(
+                    'INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)',
+                    [orderId, item.product_id, item.quantity, item.unit_price]
+                );
+            }
+
+            await connection.commit();
+
+            return res.status(201).json({
+                success: true,
+                message: 'Order created successfully.',
+                order: {
+                    id: orderId,
+                    customer_name: customerName,
+                    total_amount: totalAmount,
+                    items: enrichedItems.map(({ product_id, quantity, unit_price }) => ({
+                        product_id,
+                        quantity,
+                        unit_price
+                    }))
+                },
+                inventory: stockResponse.data
+            });
+        } catch (dbErr) {
+            if (connection) {
+                try {
+                    await connection.rollback();
+                } catch (_) {
+                    // ignore rollback failure (we still return the original error)
+                }
+            }
+
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to create order due to a database error.',
+                error: dbErr.message
+            });
+        } finally {
+            if (connection) connection.release();
+        }
     } catch (err) {
         // Axios error shape:
         // - err.response exists if Inventory returned a non-2xx HTTP response
