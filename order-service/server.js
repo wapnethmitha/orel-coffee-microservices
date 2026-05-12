@@ -304,6 +304,14 @@ app.post('/api/orders', async (req, res) => {
     }
 });
 
+// Consistent JSON 404 for unknown routes
+app.use((req, res) => {
+    return res.status(404).json({
+        success: false,
+        message: 'Route not found.'
+    });
+});
+
 // Graceful shutdown
 async function shutdown(signal) {
     try {

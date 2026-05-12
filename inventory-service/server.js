@@ -19,6 +19,28 @@ const db = mysql.createPool({
     queueLimit: 0
 });
 
+// Health check
+// - Confirms the service is running
+// - Verifies DB connectivity with a lightweight query
+app.get('/', async (req, res) => {
+    try {
+        await db.query('SELECT 1');
+        return res.status(200).json({
+            status: 'ok',
+            service: 'inventory-service',
+            db: 'ok',
+            time: new Date().toISOString()
+        });
+    } catch (err) {
+        return res.status(500).json({
+            status: 'error',
+            service: 'inventory-service',
+            db: 'error',
+            message: err.message
+        });
+    }
+});
+
 // ROUTE 1: Get the Coffee Menu
 app.get('/api/products', async (req, res) => {
     try {
@@ -131,4 +153,12 @@ app.post('/api/products/validate-stock', async (req, res) => {
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
     console.log(`✅ Inventory Service is running on http://localhost:${PORT}`);
+});
+
+// Consistent JSON 404 for unknown routes
+app.use((req, res) => {
+    return res.status(404).json({
+        success: false,
+        message: 'Route not found.'
+    });
 });
