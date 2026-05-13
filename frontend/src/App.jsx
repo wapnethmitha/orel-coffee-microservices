@@ -8,6 +8,31 @@ const ORDER_API_BASE_URL = import.meta.env.VITE_ORDER_API_BASE_URL || 'http://lo
 
 function App() {
   const [activePage, setActivePage] = useState('pos');
+  const [inventoryOnline, setInventoryOnline] = useState(false);
+  const [ordersOnline, setOrdersOnline] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkHealth = async () => {
+      const [invResult, orderResult] = await Promise.allSettled([
+        axios.get(`${INVENTORY_API_BASE_URL}/`, { timeout: 2000 }),
+        axios.get(`${ORDER_API_BASE_URL}/`, { timeout: 2000 }),
+      ]);
+
+      if (cancelled) return;
+      setInventoryOnline(invResult.status === 'fulfilled');
+      setOrdersOnline(orderResult.status === 'fulfilled');
+    };
+
+    checkHealth();
+    const intervalId = setInterval(checkHealth, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, []);
 
   const renderPage = () => {
     switch (activePage) {
@@ -22,13 +47,18 @@ function App() {
 
   return (
     <div className="app-container">
-      <Sidebar activePage={activePage} setActivePage={setActivePage} />
+      <Sidebar
+        activePage={activePage}
+        setActivePage={setActivePage}
+        inventoryOnline={inventoryOnline}
+        ordersOnline={ordersOnline}
+      />
       <main className="main-content">{renderPage()}</main>
     </div>
   );
 }
 
-function Sidebar({ activePage, setActivePage }) {
+function Sidebar({ activePage, setActivePage, inventoryOnline, ordersOnline }) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -50,10 +80,10 @@ function Sidebar({ activePage, setActivePage }) {
         </div>
       </nav>
       <div className="status-bar">
-        <div className="status-pill online">
+        <div className={`status-pill ${inventoryOnline ? 'online' : 'offline'}`}>
           <span className="dot" /> Inventory API
         </div>
-        <div className="status-pill online">
+        <div className={`status-pill ${ordersOnline ? 'online' : 'offline'}`}>
           <span className="dot" /> Orders API
         </div>
       </div>
