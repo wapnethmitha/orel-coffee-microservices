@@ -72,6 +72,9 @@ function PointOfSalePage() {
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [productsError, setProductsError] = useState('');
 
+  const [cartItems, setCartItems] = useState([]);
+  const [customerName, setCustomerName] = useState('');
+
   useEffect(() => {
     let cancelled = false;
 
@@ -109,6 +112,59 @@ function PointOfSalePage() {
     };
   }, []);
 
+  const addToCart = (product) => {
+    if (!product || product.stock <= 0) return;
+
+    setCartItems((prev) => {
+      const existing = prev.find((item) => item.productId === product.id);
+      if (!existing) {
+        return [
+          ...prev,
+          {
+            productId: product.id,
+            name: product.name,
+            price: product.price,
+            quantity: 1,
+            maxQuantity: product.stock,
+          },
+        ];
+      }
+
+      return prev.map((item) => {
+        if (item.productId !== product.id) return item;
+        const nextQty = Math.min(item.quantity + 1, item.maxQuantity);
+        return { ...item, quantity: nextQty };
+      });
+    });
+  };
+
+  const incrementCartItem = (productId) => {
+    setCartItems((prev) =>
+      prev.map((item) => {
+        if (item.productId !== productId) return item;
+        const nextQty = Math.min(item.quantity + 1, item.maxQuantity);
+        return { ...item, quantity: nextQty };
+      })
+    );
+  };
+
+  const decrementCartItem = (productId) => {
+    setCartItems((prev) =>
+      prev
+        .map((item) => {
+          if (item.productId !== productId) return item;
+          return { ...item, quantity: item.quantity - 1 };
+        })
+        .filter((item) => item.quantity > 0)
+    );
+  };
+
+  const removeCartItem = (productId) => {
+    setCartItems((prev) => prev.filter((item) => item.productId !== productId));
+  };
+
+  const cartTotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
   return (
     <>
       <div className="page-header">
@@ -129,17 +185,25 @@ function PointOfSalePage() {
             )}
 
             {!isLoadingProducts && !productsError && products.map((p) => (
-              <ProductCard key={p.id} product={p} />
+              <ProductCard key={p.id} product={p} onAddToCart={addToCart} />
             ))}
           </div>
         </section>
-        <Cart />
+        <Cart
+          items={cartItems}
+          customerName={customerName}
+          setCustomerName={setCustomerName}
+          onIncrement={incrementCartItem}
+          onDecrement={decrementCartItem}
+          onRemove={removeCartItem}
+          total={cartTotal}
+        />
       </div>
     </>
   );
 }
 
-function ProductCard({ product }) {
+function ProductCard({ product, onAddToCart }) {
   const getStockClass = (stock) => {
     if (stock === 0) return 'zero';
     if (stock < 10) return 'low';
@@ -155,23 +219,81 @@ function ProductCard({ product }) {
           {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
         </span>
       </div>
-      <button className="action-button" disabled={product.stock === 0}>
+      <button
+        className="action-button"
+        disabled={product.stock === 0}
+        onClick={() => onAddToCart?.(product)}
+      >
         Add to Cart
       </button>
     </article>
   );
 }
 
-function Cart() {
+function Cart({ items, customerName, setCustomerName, onIncrement, onDecrement, onRemove, total }) {
   return (
     <aside className="cart-section">
       <h3>Current Order</h3>
       <div className="cart-items">
-        <div className="empty-cart">Cart is empty</div>
+        {items.length === 0 ? (
+          <div className="empty-cart">Cart is empty</div>
+        ) : (
+          <div className="cart-list">
+            {items.map((item) => (
+              <div key={item.productId} className="cart-item">
+                <div className="cart-item-main">
+                  <div className="cart-item-name">{item.name}</div>
+                  <div className="cart-item-meta">
+                    Rs. {item.price.toFixed(2)} × {item.quantity}
+                  </div>
+                </div>
+                <div className="cart-item-actions">
+                  <div className="qty-controls">
+                    <button
+                      type="button"
+                      className="qty-button"
+                      onClick={() => onDecrement?.(item.productId)}
+                      aria-label={`Decrease ${item.name}`}
+                    >
+                      −
+                    </button>
+                    <div className="qty-value">{item.quantity}</div>
+                    <button
+                      type="button"
+                      className="qty-button"
+                      onClick={() => onIncrement?.(item.productId)}
+                      disabled={item.quantity >= item.maxQuantity}
+                      aria-label={`Increase ${item.name}`}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => onRemove?.(item.productId)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div className="cart-total-row">
+              <span>Total</span>
+              <span className="cart-total">Rs. {Number(total).toFixed(2)}</span>
+            </div>
+          </div>
+        )}
       </div>
       <div className="field">
         <label htmlFor="customer-name">Customer Name</label>
-        <input id="customer-name" type="text" placeholder="e.g. Anya Fernando" />
+        <input
+          id="customer-name"
+          type="text"
+          placeholder="e.g. Anya Fernando"
+          value={customerName}
+          onChange={(e) => setCustomerName?.(e.target.value)}
+        />
       </div>
       <button className="primary-button" disabled>
         Place Order
