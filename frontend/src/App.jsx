@@ -43,7 +43,7 @@ function Sidebar({ activePage, setActivePage }) {
     <aside className="sidebar">
       <div className="brand">
         <img src={logo} alt="Orel Logo" className="brand-logo" />
-        <h1>Coffee Shop</h1>
+        <h1>COFEE SHOP</h1>
       </div>
       <nav className="nav">
         <div
