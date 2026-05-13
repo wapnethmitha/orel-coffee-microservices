@@ -6,11 +6,6 @@ import logo from './assets/logo.png';
 const INVENTORY_API_BASE_URL = import.meta.env.VITE_INVENTORY_API_BASE_URL || 'http://localhost:5001';
 const ORDER_API_BASE_URL = import.meta.env.VITE_ORDER_API_BASE_URL || 'http://localhost:5002';
 
-const sampleHistory = [
-  { id: '#001', customer: 'Postman Test', date: 'May 12, 2026', total: 'Rs. 700.00' },
-  { id: '#002', customer: 'Walk-in', date: 'May 12, 2026', total: 'Rs. 1,250.00' },
-];
-
 function App() {
   const [activePage, setActivePage] = useState('pos');
 
@@ -28,9 +23,7 @@ function App() {
   return (
     <div className="app-container">
       <Sidebar activePage={activePage} setActivePage={setActivePage} />
-      <main className="main-content">
-        {renderPage()}
-      </main>
+      <main className="main-content">{renderPage()}</main>
     </div>
   );
 }
@@ -75,6 +68,7 @@ function PointOfSalePage() {
 
   const [cartItems, setCartItems] = useState([]);
   const [customerName, setCustomerName] = useState('');
+
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [placeOrderError, setPlaceOrderError] = useState('');
   const [placeOrderSuccess, setPlaceOrderSuccess] = useState('');
@@ -93,28 +87,10 @@ function PointOfSalePage() {
     }));
   };
 
-  const refreshProducts = async () => {
-    setIsLoadingProducts(true);
-    setProductsError('');
-
-    try {
-      const mapped = await fetchProducts();
-      setProducts(mapped);
-    } catch (err) {
-      const message = err?.response?.data?.error || err?.message || 'Failed to load products.';
-      setProductsError(String(message));
-      setProducts([]);
-    } finally {
-      setIsLoadingProducts(false);
-    }
-  };
-
   useEffect(() => {
     let cancelled = false;
 
-    const load = async () => {
-      if (cancelled) return;
-
+    const refreshProducts = async () => {
       setIsLoadingProducts(true);
       setProductsError('');
 
@@ -131,11 +107,27 @@ function PointOfSalePage() {
       }
     };
 
-    load();
+    refreshProducts();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const refreshProductsNow = async () => {
+    setIsLoadingProducts(true);
+    setProductsError('');
+
+    try {
+      const mapped = await fetchProducts();
+      setProducts(mapped);
+    } catch (err) {
+      const message = err?.response?.data?.error || err?.message || 'Failed to load products.';
+      setProductsError(String(message));
+      setProducts([]);
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  };
 
   const addToCart = (product) => {
     if (!product || product.stock <= 0) return;
@@ -157,8 +149,7 @@ function PointOfSalePage() {
 
       return prev.map((item) => {
         if (item.productId !== product.id) return item;
-        const nextQty = Math.min(item.quantity + 1, item.maxQuantity);
-        return { ...item, quantity: nextQty };
+        return { ...item, quantity: Math.min(item.quantity + 1, item.maxQuantity) };
       });
     });
   };
@@ -167,8 +158,7 @@ function PointOfSalePage() {
     setCartItems((prev) =>
       prev.map((item) => {
         if (item.productId !== productId) return item;
-        const nextQty = Math.min(item.quantity + 1, item.maxQuantity);
-        return { ...item, quantity: nextQty };
+        return { ...item, quantity: Math.min(item.quantity + 1, item.maxQuantity) };
       })
     );
   };
@@ -215,7 +205,7 @@ function PointOfSalePage() {
       setCartItems([]);
       setCustomerName('');
 
-      await refreshProducts();
+      await refreshProductsNow();
     } catch (err) {
       const apiMessage =
         err?.response?.data?.message ||
@@ -239,9 +229,7 @@ function PointOfSalePage() {
           <div className="product-grid">
             {isLoadingProducts && <div className="empty-cart">Loading products…</div>}
 
-            {!isLoadingProducts && productsError && (
-              <div className="empty-cart">{productsError}</div>
-            )}
+            {!isLoadingProducts && productsError && <div className="empty-cart">{productsError}</div>}
 
             {!isLoadingProducts && !productsError && products.length === 0 && (
               <div className="empty-cart">No products found.</div>
@@ -347,11 +335,7 @@ function Cart({
                       +
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => onRemove?.(item.productId)}
-                  >
+                  <button type="button" className="link-button" onClick={() => onRemove?.(item.productId)}>
                     Remove
                   </button>
                 </div>
@@ -371,7 +355,7 @@ function Cart({
           type="text"
           placeholder="e.g. Anya Fernando"
           value={customerName}
-          onChange={(e) => setCustomerName?.(e.target.value)}
+          onChange={(e) => setCustomerName(e.target.value)}
         />
       </div>
       {placeOrderError && <div className="notice notice-error">{placeOrderError}</div>}
@@ -388,33 +372,95 @@ function Cart({
 }
 
 function OrderHistoryPage() {
+  const [orders, setOrders] = useState([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  const [ordersError, setOrdersError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadOrders = async () => {
+      setIsLoadingOrders(true);
+      setOrdersError('');
+
+      try {
+        const response = await axios.get(`${ORDER_API_BASE_URL}/api/orders`, {
+          timeout: 8000,
+        });
+
+        const rows = Array.isArray(response?.data?.orders) ? response.data.orders : [];
+        if (!cancelled) setOrders(rows);
+      } catch (err) {
+        if (cancelled) return;
+        const message = err?.response?.data?.message || err?.message || 'Failed to load order history.';
+        setOrdersError(String(message));
+        setOrders([]);
+      } finally {
+        if (!cancelled) setIsLoadingOrders(false);
+      }
+    };
+
+    loadOrders();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <>
       <div className="page-header">
         <h2>Order History</h2>
         <p>Browse all past transactions from the Order Service.</p>
       </div>
+
       <div className="history-table-container">
-        <table className="history-table">
-          <thead>
-            <tr>
-              <th>Order ID</th>
-              <th>Customer</th>
-              <th>Date</th>
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sampleHistory.map(order => (
-              <tr key={order.id}>
-                <td>{order.id}</td>
-                <td>{order.customer}</td>
-                <td>{order.date}</td>
-                <td>{order.total}</td>
+        {isLoadingOrders && <div className="empty-cart">Loading orders…</div>}
+
+        {!isLoadingOrders && ordersError && <div className="empty-cart">{ordersError}</div>}
+
+        {!isLoadingOrders && !ordersError && orders.length === 0 && (
+          <div className="empty-cart">No orders yet.</div>
+        )}
+
+        {!isLoadingOrders && !ordersError && orders.length > 0 && (
+          <table className="history-table">
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Customer</th>
+                <th>Date</th>
+                <th>Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {orders.map((order) => {
+                const id = Number(order.id);
+                const customer = order.customer_name && String(order.customer_name).trim()
+                  ? String(order.customer_name)
+                  : 'Walk-in';
+
+                const createdAt = order.created_at ? new Date(order.created_at) : null;
+                const dateText = createdAt && !Number.isNaN(createdAt.getTime())
+                  ? createdAt.toLocaleString()
+                  : '-';
+
+                const totalAmount = Number(order.total_amount);
+                const totalText = Number.isFinite(totalAmount)
+                  ? `Rs. ${totalAmount.toFixed(2)}`
+                  : 'Rs. -';
+
+                return (
+                  <tr key={id}>
+                    <td>#{id}</td>
+                    <td>{customer}</td>
+                    <td>{dateText}</td>
+                    <td>{totalText}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </>
   );
