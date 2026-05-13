@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import axios from 'axios';
 import './App.css';
 import logo from './assets/logo.png';
@@ -405,6 +405,17 @@ function OrderHistoryPage() {
   const [orders, setOrders] = useState([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const [ordersError, setOrdersError] = useState('');
+  const [expandedOrderIds, setExpandedOrderIds] = useState(() => new Set());
+  const [productNameById, setProductNameById] = useState({});
+
+  const toggleExpanded = (orderId) => {
+    setExpandedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -414,12 +425,36 @@ function OrderHistoryPage() {
       setOrdersError('');
 
       try {
-        const response = await axios.get(`${ORDER_API_BASE_URL}/api/orders`, {
-          timeout: 8000,
-        });
+        const [ordersResult, productsResult] = await Promise.allSettled([
+          axios.get(`${ORDER_API_BASE_URL}/api/orders`, { timeout: 8000 }),
+          axios.get(`${INVENTORY_API_BASE_URL}/api/products`, { timeout: 8000 }),
+        ]);
 
-        const rows = Array.isArray(response?.data?.orders) ? response.data.orders : [];
-        if (!cancelled) setOrders(rows);
+        if (cancelled) return;
+
+        if (ordersResult.status !== 'fulfilled') {
+          throw ordersResult.reason;
+        }
+
+        const rows = Array.isArray(ordersResult.value?.data?.orders)
+          ? ordersResult.value.data.orders
+          : [];
+        setOrders(rows);
+
+        if (productsResult.status === 'fulfilled') {
+          const productRows = Array.isArray(productsResult.value?.data)
+            ? productsResult.value.data
+            : [];
+          const nextMap = {};
+          for (const p of productRows) {
+            const id = Number(p?.id);
+            if (!Number.isFinite(id)) continue;
+            nextMap[id] = String(p?.name ?? `Product #${id}`);
+          }
+          setProductNameById(nextMap);
+        } else {
+          setProductNameById({});
+        }
       } catch (err) {
         if (cancelled) return;
         const message = err?.response?.data?.message || err?.message || 'Failed to load order history.';
@@ -456,6 +491,7 @@ function OrderHistoryPage() {
           <table className="history-table">
             <thead>
               <tr>
+                <th>Actions</th>
                 <th>Order ID</th>
                 <th>Customer</th>
                 <th>Date</th>
@@ -465,6 +501,7 @@ function OrderHistoryPage() {
             <tbody>
               {orders.map((order) => {
                 const id = Number(order.id);
+                const isExpanded = expandedOrderIds.has(id);
                 const customer = order.customer_name && String(order.customer_name).trim()
                   ? String(order.customer_name)
                   : 'Walk-in';
@@ -479,13 +516,74 @@ function OrderHistoryPage() {
                   ? `Rs. ${totalAmount.toFixed(2)}`
                   : 'Rs. -';
 
+                const items = Array.isArray(order.items) ? order.items : [];
+
                 return (
-                  <tr key={id}>
-                    <td>#{id}</td>
-                    <td>{customer}</td>
-                    <td>{dateText}</td>
-                    <td>{totalText}</td>
-                  </tr>
+                  <Fragment key={id}>
+                    <tr>
+                      <td>
+                        <button
+                          type="button"
+                          className="table-action-button"
+                          onClick={() => toggleExpanded(id)}
+                          aria-expanded={isExpanded}
+                          aria-label={isExpanded ? `Hide items for order ${id}` : `Show items for order ${id}`}
+                        >
+                          {isExpanded ? 'Hide items' : 'View items'}
+                        </button>
+                      </td>
+                      <td>#{id}</td>
+                      <td>{customer}</td>
+                      <td>{dateText}</td>
+                      <td>{totalText}</td>
+                    </tr>
+
+                    {isExpanded && (
+                      <tr className="history-details-row">
+                        <td colSpan={5}>
+                          {items.length === 0 ? (
+                            <div className="history-details">No items found for this order.</div>
+                          ) : (
+                            <div className="history-details">
+                              <div className="history-details-title">Items</div>
+                              <table className="history-items-table">
+                                <thead>
+                                  <tr>
+                                    <th>Product</th>
+                                    <th>Qty</th>
+                                    <th>Unit Price</th>
+                                    <th>Total</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {items.map((item) => {
+                                    const productId = Number(item.product_id);
+                                    const productName = productNameById[productId] || `Product #${productId}`;
+
+                                    const qty = Number(item.quantity);
+                                    const unit = Number(item.unit_price);
+                                    const lineTotal = Number.isFinite(unit) && Number.isFinite(qty)
+                                      ? unit * qty
+                                      : NaN;
+
+                                    return (
+                                      <tr key={item.id ?? `${productId}-${qty}`}
+                                      >
+                                        <td>{productName}</td>
+                                        <td>{Number.isFinite(qty) ? qty : '-'}</td>
+                                        <td>Rs. {Number.isFinite(unit) ? unit.toFixed(2) : '-'}</td>
+                                        <td>Rs. {Number.isFinite(lineTotal) ? lineTotal.toFixed(2) : '-'}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
