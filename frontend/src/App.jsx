@@ -1,13 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import axios from 'axios';
 import './App.css';
 import logo from './assets/logo.png';
 
-const sampleProducts = [
-  { id: 1, name: 'Espresso', price: 350.00, stock: 50 },
-  { id: 2, name: 'Latte', price: 420.00, stock: 18 },
-  { id: 3, name: 'Mocha', price: 480.00, stock: 0 },
-  { id: 4, name: 'Americano', price: 380.00, stock: 25 },
-];
+const INVENTORY_API_BASE_URL = import.meta.env.VITE_INVENTORY_API_BASE_URL || 'http://localhost:5001';
 
 const sampleHistory = [
   { id: '#001', customer: 'Postman Test', date: 'May 12, 2026', total: 'Rs. 700.00' },
@@ -72,6 +68,47 @@ function Sidebar({ activePage, setActivePage }) {
 }
 
 function PointOfSalePage() {
+  const [products, setProducts] = useState([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [productsError, setProductsError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchProducts = async () => {
+      try {
+        setIsLoadingProducts(true);
+        setProductsError('');
+
+        const response = await axios.get(`${INVENTORY_API_BASE_URL}/api/products`, {
+          timeout: 8000,
+        });
+
+        const rows = Array.isArray(response.data) ? response.data : [];
+        const mapped = rows.map((row) => ({
+          id: Number(row.id),
+          name: String(row.name ?? ''),
+          price: Number(row.price),
+          stock: Number(row.stock_quantity ?? row.stock ?? 0),
+        }));
+
+        if (!cancelled) setProducts(mapped);
+      } catch (err) {
+        if (cancelled) return;
+        const message = err?.response?.data?.error || err?.message || 'Failed to load products.';
+        setProductsError(String(message));
+        setProducts([]);
+      } finally {
+        if (!cancelled) setIsLoadingProducts(false);
+      }
+    };
+
+    fetchProducts();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <>
       <div className="page-header">
@@ -81,7 +118,19 @@ function PointOfSalePage() {
       <div className="pos-layout">
         <section className="product-catalog">
           <div className="product-grid">
-            {sampleProducts.map(p => <ProductCard key={p.id} product={p} />)}
+            {isLoadingProducts && <div className="empty-cart">Loading products…</div>}
+
+            {!isLoadingProducts && productsError && (
+              <div className="empty-cart">{productsError}</div>
+            )}
+
+            {!isLoadingProducts && !productsError && products.length === 0 && (
+              <div className="empty-cart">No products found.</div>
+            )}
+
+            {!isLoadingProducts && !productsError && products.map((p) => (
+              <ProductCard key={p.id} product={p} />
+            ))}
           </div>
         </section>
         <Cart />
