@@ -4,6 +4,7 @@ import './App.css';
 import logo from './assets/logo.png';
 
 const INVENTORY_API_BASE_URL = import.meta.env.VITE_INVENTORY_API_BASE_URL || 'http://localhost:5001';
+const ORDER_API_BASE_URL = import.meta.env.VITE_ORDER_API_BASE_URL || 'http://localhost:5002';
 
 const sampleHistory = [
   { id: '#001', customer: 'Postman Test', date: 'May 12, 2026', total: 'Rs. 700.00' },
@@ -74,27 +75,51 @@ function PointOfSalePage() {
 
   const [cartItems, setCartItems] = useState([]);
   const [customerName, setCustomerName] = useState('');
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [placeOrderError, setPlaceOrderError] = useState('');
+  const [placeOrderSuccess, setPlaceOrderSuccess] = useState('');
+
+  const fetchProducts = async () => {
+    const response = await axios.get(`${INVENTORY_API_BASE_URL}/api/products`, {
+      timeout: 8000,
+    });
+
+    const rows = Array.isArray(response.data) ? response.data : [];
+    return rows.map((row) => ({
+      id: Number(row.id),
+      name: String(row.name ?? ''),
+      price: Number(row.price),
+      stock: Number(row.stock_quantity ?? row.stock ?? 0),
+    }));
+  };
+
+  const refreshProducts = async () => {
+    setIsLoadingProducts(true);
+    setProductsError('');
+
+    try {
+      const mapped = await fetchProducts();
+      setProducts(mapped);
+    } catch (err) {
+      const message = err?.response?.data?.error || err?.message || 'Failed to load products.';
+      setProductsError(String(message));
+      setProducts([]);
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
 
-    const fetchProducts = async () => {
+    const load = async () => {
+      if (cancelled) return;
+
+      setIsLoadingProducts(true);
+      setProductsError('');
+
       try {
-        setIsLoadingProducts(true);
-        setProductsError('');
-
-        const response = await axios.get(`${INVENTORY_API_BASE_URL}/api/products`, {
-          timeout: 8000,
-        });
-
-        const rows = Array.isArray(response.data) ? response.data : [];
-        const mapped = rows.map((row) => ({
-          id: Number(row.id),
-          name: String(row.name ?? ''),
-          price: Number(row.price),
-          stock: Number(row.stock_quantity ?? row.stock ?? 0),
-        }));
-
+        const mapped = await fetchProducts();
         if (!cancelled) setProducts(mapped);
       } catch (err) {
         if (cancelled) return;
@@ -106,7 +131,7 @@ function PointOfSalePage() {
       }
     };
 
-    fetchProducts();
+    load();
     return () => {
       cancelled = true;
     };
@@ -165,6 +190,44 @@ function PointOfSalePage() {
 
   const cartTotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
+  const placeOrder = async () => {
+    if (cartItems.length === 0 || isPlacingOrder) return;
+
+    setIsPlacingOrder(true);
+    setPlaceOrderError('');
+    setPlaceOrderSuccess('');
+
+    try {
+      const payload = {
+        customer_name: customerName.trim() ? customerName.trim() : null,
+        items: cartItems.map((item) => ({
+          product_id: item.productId,
+          quantity: item.quantity,
+        })),
+      };
+
+      const response = await axios.post(`${ORDER_API_BASE_URL}/api/orders`, payload, {
+        timeout: 12000,
+      });
+
+      const orderId = response?.data?.order?.id;
+      setPlaceOrderSuccess(orderId ? `Order #${orderId} created.` : 'Order created.');
+      setCartItems([]);
+      setCustomerName('');
+
+      await refreshProducts();
+    } catch (err) {
+      const apiMessage =
+        err?.response?.data?.message ||
+        err?.response?.data?.inventory?.message ||
+        err?.message ||
+        'Failed to place order.';
+      setPlaceOrderError(String(apiMessage));
+    } finally {
+      setIsPlacingOrder(false);
+    }
+  };
+
   return (
     <>
       <div className="page-header">
@@ -197,6 +260,10 @@ function PointOfSalePage() {
           onDecrement={decrementCartItem}
           onRemove={removeCartItem}
           total={cartTotal}
+          isPlacingOrder={isPlacingOrder}
+          placeOrderError={placeOrderError}
+          placeOrderSuccess={placeOrderSuccess}
+          onPlaceOrder={placeOrder}
         />
       </div>
     </>
@@ -230,7 +297,19 @@ function ProductCard({ product, onAddToCart }) {
   );
 }
 
-function Cart({ items, customerName, setCustomerName, onIncrement, onDecrement, onRemove, total }) {
+function Cart({
+  items,
+  customerName,
+  setCustomerName,
+  onIncrement,
+  onDecrement,
+  onRemove,
+  total,
+  isPlacingOrder,
+  placeOrderError,
+  placeOrderSuccess,
+  onPlaceOrder,
+}) {
   return (
     <aside className="cart-section">
       <h3>Current Order</h3>
@@ -295,8 +374,14 @@ function Cart({ items, customerName, setCustomerName, onIncrement, onDecrement, 
           onChange={(e) => setCustomerName?.(e.target.value)}
         />
       </div>
-      <button className="primary-button" disabled>
-        Place Order
+      {placeOrderError && <div className="notice notice-error">{placeOrderError}</div>}
+      {placeOrderSuccess && <div className="notice notice-success">{placeOrderSuccess}</div>}
+      <button
+        className="primary-button"
+        disabled={items.length === 0 || isPlacingOrder}
+        onClick={() => onPlaceOrder?.()}
+      >
+        {isPlacingOrder ? 'Placing…' : 'Place Order'}
       </button>
     </aside>
   );
