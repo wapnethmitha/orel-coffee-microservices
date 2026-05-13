@@ -143,6 +143,30 @@ function PointOfSalePage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!Array.isArray(products) || products.length === 0) return;
+
+    const productById = new Map(products.map((p) => [p.id, p]));
+
+    setCartItems((prev) =>
+      prev.map((item) => {
+        const product = productById.get(item.productId);
+        if (!product) return item;
+
+        const nextMaxQuantity = Math.max(0, Number(product.stock) || 0);
+        const nextQuantity = Math.min(item.quantity, nextMaxQuantity);
+
+        return {
+          ...item,
+          name: product.name,
+          price: product.price,
+          maxQuantity: nextMaxQuantity,
+          quantity: nextQuantity,
+        };
+      })
+    );
+  }, [products]);
+
   const refreshProductsNow = async () => {
     setIsLoadingProducts(true);
     setProductsError('');
