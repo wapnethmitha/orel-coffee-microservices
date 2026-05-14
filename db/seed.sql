@@ -7,6 +7,15 @@ INSERT INTO products (name, price, stock_quantity) VALUES
 ('Croissant', 300.00, 10);
 
 USE coffee_orders;
--- Adding a sample order to show the system works
+
+-- Order 1
 INSERT INTO orders (customer_name, total_amount) VALUES ('First Test Customer', 900.00);
 INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (1, 1, 1, 350.00), (1, 2, 1, 550.00);
+
+-- Order 2
+INSERT INTO orders (customer_name, total_amount) VALUES ('Walk-in', 800.00);
+INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (2, 3, 2, 400.00);
+
+-- Order 3
+INSERT INTO orders (customer_name, total_amount) VALUES ('Nimal Perera', 1300.00);
+INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (3, 2, 2, 550.00), (3, 5, 1, 200.00);
