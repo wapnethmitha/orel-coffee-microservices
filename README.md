@@ -77,16 +77,39 @@ Open three separate terminal windows:
 - Stock updates are done in Inventory Service with an atomic conditional update inside a DB transaction.
 - No authentication/authorization (assessment scope).
 
+## Project Documents
+
+- [System Design Document](docs/design.md)
+- [Reflection Document](docs/reflection.md)
+
 ## Known Limitations
 
 - No automated tests yet.
 - No Docker Compose yet.
-- Error responses are kept simple and may not be fully standardized across all endpoints.
 
 ## Branching Strategy
 
-Suggested approach for clear commit history:
+The repository uses clear, descriptive commit prefixes to show progress over time.
 
-- `main` for stable working code
-- `feature/<short-description>` for features
-- `fix/<short-description>` for bug fixes
+- `feat` for new features
+- `docs` for documentation updates
+- `chore` for maintenance or dependency updates
+- `style` for UI or formatting changes
+
+## Commit History
+
+The repository history shows a step-by-step implementation flow:
+
+- Inventory service setup and database connectivity
+- Order service creation and inventory validation flow
+- Stock validation and deduction in transactions
+- Order history retrieval and frontend integration
+- Frontend product loading, cart, order placement, and status indicators
+- Documentation, seed data, and environment configuration updates
+
+Recent commits also include:
+
+- Added sample orders to the seed data
+- Restructured and enhanced the README and design documents
+- Added example environment configuration for the inventory service
+- Added SQL schema, seed data, and proof-of-work queries
