@@ -7,7 +7,8 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Connect to MySQL Database 
+// Create a connection pool to the MySQL database.
+// Using a pool improves performance under concurrent requests.
 const db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -19,9 +20,9 @@ const db = mysql.createPool({
     queueLimit: 0
 });
 
-// Health check
-// - Confirms the service is running
-// - Verifies DB connectivity with a lightweight query
+// Health check endpoint
+// - Returns 200 when the service and DB are reachable
+// - Useful for manual verification
 app.get('/', async (req, res) => {
     try {
         await db.query('SELECT 1');
@@ -41,7 +42,8 @@ app.get('/', async (req, res) => {
     }
 });
 
-// ROUTE 1: Get the Coffee Menu
+// ROUTE: Get the coffee product list
+// Returns all products with their price and current stock
 app.get('/api/products', async (req, res) => {
     try {
         const [rows] = await db.query('SELECT * FROM products');
@@ -60,7 +62,7 @@ app.get('/api/products', async (req, res) => {
 app.post('/api/products/validate-stock', async (req, res) => {
     const { items } = req.body;
 
-    // Basic input validation (kept simple for assessment)
+    // Validate request body: expect a non-empty array of items
     if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({
             success: false,
@@ -68,7 +70,8 @@ app.post('/api/products/validate-stock', async (req, res) => {
         });
     }
 
-    // If the same product appears twice, treat it as one combined request.
+    // Combine quantities for the same product id so callers may send
+    // duplicate product ids and we still process them correctly.
     const requestedQtyById = new Map();
     for (const item of items) {
         if (!item || typeof item !== 'object') {
@@ -94,7 +97,9 @@ app.post('/api/products/validate-stock', async (req, res) => {
         connection = await db.getConnection();
         await connection.beginTransaction();
 
-        // For each product, attempt an atomic decrement
+        // Attempt an atomic stock decrement per product.
+        // The conditional UPDATE ensures we only deduct when enough stock exists.
+        // If any UPDATE affects 0 rows, we inspect the current stock and abort.
         for (const [productId, requestedQty] of requestedQtyById.entries()) {
             const [updateResult] = await connection.query(
                 'UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?',
@@ -102,12 +107,15 @@ app.post('/api/products/validate-stock', async (req, res) => {
             );
 
             if (updateResult.affectedRows === 0) {
-                // Find out WHY it failed to give a helpful message.
+                // UPDATE did not change any row: either the product does not exist
+                // or the available stock is less than requested. Query the row
+                // to determine the correct error to return to the caller.
                 const [rows] = await connection.query(
                     'SELECT id, name, stock_quantity FROM products WHERE id = ?',
                     [productId]
                 );
 
+                // Roll back the transaction and return an explanatory error.
                 await connection.rollback();
 
                 if (rows.length === 0) {
@@ -131,6 +139,9 @@ app.post('/api/products/validate-stock', async (req, res) => {
             message: 'Stock validated and deducted successfully.'
         });
     } catch (err) {
+        // If an error occurs, attempt to roll back the transaction.
+        // If rollback itself fails we cannot do much in this handler but
+        // we swallow the rollback error to avoid masking the original error.
         if (connection) {
             try {
                 await connection.rollback();
