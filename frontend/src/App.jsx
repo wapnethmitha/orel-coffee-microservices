@@ -407,7 +407,7 @@ function Cart({
         <input
           id="customer-name"
           type="text"
-          placeholder="e.g. Anya Fernando"
+          placeholder="e.g. Pesandu Wanniarachchi"
           value={customerName}
           onChange={(e) => setCustomerName(e.target.value)}
         />

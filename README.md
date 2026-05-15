@@ -81,6 +81,7 @@ Open three separate terminal windows:
 
 - [System Design Document](docs/design.md)
 - [Reflection Document](docs/reflection.md)
+- Postman collection: tools/postman/Coffee Shop Microservices.postman_collection.json
 
 ## Known Limitations
 
@@ -113,3 +114,21 @@ Recent commits also include:
 - Restructured and enhanced the README and design documents
 - Added example environment configuration for the inventory service
 - Added SQL schema, seed data, and proof-of-work queries
+
+## Smoke Test (End-to-end verification)
+
+- Date: 2026-05-15
+- Environment: Local (MySQL via Workbench), Inventory service at http://localhost:5001, Order service at http://localhost:5002, Frontend at http://localhost:5173
+- Purpose: Quick end-to-end verification that core requirements work (product listing, stock validation, order placement, order history).
+
+Steps performed:
+
+1. Inventory health: `GET /` → 200 OK
+2. Fetch products: `GET /api/products` → returned 5 products (ids 1–5)
+3. Place order (valid): `POST /api/orders` with items `[{product_id:1,quantity:1},{product_id:2,quantity:1}]` → 201 Created, order saved
+4. Verify stock decrement: `GET /api/products` → Espresso and Latte stock decreased by 1
+5. Order history: `GET /api/orders` → new order appears with items
+6. Insufficient stock handling: `POST /api/orders` with excessive quantity → 400 Bad Request, no order created
+7. Frontend E2E: Place order via UI → success message, cart cleared, UI updates live
+
+Result: PASS — core end-to-end smoke tests performed by Pesandu Wanniarachchi on 2026-05-15.
