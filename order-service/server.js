@@ -9,12 +9,14 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Service port
 const PORT = Number(process.env.PORT || 5002);
 
-
+// Inventory service base URL (Order Service depends on Inventory for stock checks and prices)
 const INVENTORY_SERVICE_URL = process.env.INVENTORY_SERVICE_URL;
 
 if (!INVENTORY_SERVICE_URL) {
+    // Warn during startup so the developer knows the service is misconfigured locally
     console.warn('⚠️  INVENTORY_SERVICE_URL is not set. POST /api/orders will fail until configured.');
 }
 
@@ -67,22 +69,22 @@ function validateCreateOrderPayload(body) {
     return { ok: true };
 }
 
-//Fetches product details from the Inventory Service.
-
+// Fetch product list from the Inventory Service.
+// Used to read current prices (Inventory is the source of truth for catalog data).
 async function fetchInventoryProducts() {
     const response = await axios.get(`${INVENTORY_SERVICE_URL}/api/products`, { timeout: 5000 });
     return Array.isArray(response.data) ? response.data : [];
 }
 
 function roundTo2(amount) {
-    // Simple rounding for currency-like numbers.
-    // (For production, many teams use integer cents or a decimal library.)
+    // Round to 2 decimal places for display/total calculations.
+    // Note: in production prefer integer cents or a decimal library to avoid floating point issues.
     return Math.round(Number(amount) * 100) / 100;
 }
 
-// Health check
-// - Confirms the service is running
-// - Verifies DB connectivity via a lightweight query
+// Health check endpoint
+// - Returns 200 when the service and DB are reachable
+// - Useful for load-balancers and basic manual verification
 app.get('/', async (req, res) => {
     try {
         await pool.query('SELECT 1');
@@ -103,9 +105,9 @@ app.get('/', async (req, res) => {
 });
 
 /**
- * Order history (for the shop owner / staff dashboard)
- *
- * Returns orders with their items.- Order Service database.
+ * GET /api/orders
+ * Return order history (orders and their items) from the Order Service database.
+ * The SQL produces a flat join result which we reshape into a nested JSON structure.
  */
 app.get('/api/orders', async (req, res) => {
     try {
@@ -165,6 +167,16 @@ app.get('/api/orders', async (req, res) => {
 });
 
 
+/**
+ * POST /api/orders
+ * Create a new order.
+ * Steps:
+ *  1) Validate request payload
+ *  2) Call Inventory Service to validate and deduct stock (atomic operation in Inventory)
+ *  3) Fetch product prices from Inventory and compute totals
+ *  4) Persist order and order_items in a DB transaction local to Order Service
+ * If any step fails we avoid partial commits and return a clear error to the client.
+ */
 app.post('/api/orders', async (req, res) => {
     const validation = validateCreateOrderPayload(req.body);
     if (!validation.ok) {
@@ -181,8 +193,8 @@ app.post('/api/orders', async (req, res) => {
         });
     }
 
-    // Convert order items into the Inventory Service contract.
-    // We keep the payload minimal: only product id + quantity.
+    // Convert incoming order items into the Inventory Service expected shape:
+    // { id, quantity } — Inventory only needs ids and quantities to validate/deduct stock.
     const inventoryItems = req.body.items.map((item) => ({
         id: item.product_id,
         quantity: item.quantity
@@ -190,16 +202,15 @@ app.post('/api/orders', async (req, res) => {
 
     try {
         // 1) Validate/deduct stock first (core scenario).
-        // If this fails, we DO NOT create an order record.
+        // Inventory performs the atomic updates; if it fails we do not proceed.
         const stockResponse = await axios.post(
             `${INVENTORY_SERVICE_URL}/api/products/validate-stock`,
             { items: inventoryItems },
             { timeout: 5000 }
         );
 
-        // 2) Pull product prices from Inventory Service so we can compute totals.
-        // This is intentionally a separate call because Inventory is the source of truth
-        // for product catalog data.
+        // 2) Query Inventory for product details (prices) so Order Service can compute total_amount.
+        // Keeping pricing in Inventory ensures a single source of truth for product data.
         const products = await fetchInventoryProducts();
         const productById = new Map(products.map((p) => [Number(p.id), p]));
 
@@ -215,7 +226,7 @@ app.post('/api/orders', async (req, res) => {
             };
         });
 
-        // If any product_id is unknown, fail fast (better than inserting partial/incorrect orders).
+        // If any product is missing a price, fail early to avoid creating incorrect orders.
         const missingPrice = enrichedItems.find((i) => !Number.isFinite(i.unit_price));
         if (missingPrice) {
             return res.status(400).json({
@@ -226,8 +237,8 @@ app.post('/api/orders', async (req, res) => {
 
         const totalAmount = roundTo2(enrichedItems.reduce((sum, i) => sum + i.line_total, 0));
 
-        // 3) Persist the order in a single DB transaction.
-        // Either ALL rows are saved (orders + order_items) or NONE are.
+        // 3) Persist the order in a local DB transaction.
+        // This transaction ensures atomicity of order creation and its items within Order Service.
         let connection;
         try {
             connection = await pool.getConnection();
@@ -243,6 +254,7 @@ app.post('/api/orders', async (req, res) => {
             const orderId = orderResult.insertId;
 
             for (const item of enrichedItems) {
+                // Insert each order item associated with the new order.
                 await connection.query(
                     'INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)',
                     [orderId, item.product_id, item.quantity, item.unit_price]
@@ -267,11 +279,13 @@ app.post('/api/orders', async (req, res) => {
                 inventory: stockResponse.data
             });
         } catch (dbErr) {
+            // Attempt to roll back the transaction on error. If rollback fails we log/ignore
+            // the rollback error but still return the original DB error to the caller.
             if (connection) {
                 try {
                     await connection.rollback();
                 } catch (_) {
-                    // ignore rollback failure (we still return the original error)
+                    // ignore rollback failure
                 }
             }
 
@@ -284,10 +298,9 @@ app.post('/api/orders', async (req, res) => {
             if (connection) connection.release();
         }
     } catch (err) {
-        // Axios error shape:
-        // - err.response exists if Inventory returned a non-2xx HTTP response
-        // - err.request exists if Inventory is unreachable / timed out
-
+        // Axios error handling:
+        // - err.response exists when Inventory returned a non-2xx status (we forward it)
+        // - err.request exists when the request was made but no response received (timeout, network error)
         if (err.response) {
             return res.status(err.response.status).json({
                 success: false,
@@ -296,7 +309,7 @@ app.post('/api/orders', async (req, res) => {
             });
         }
 
-        // Treat timeouts / DNS / connection refusal as service unavailable
+        // For connectivity issues treat inventory as temporarily unavailable.
         return res.status(503).json({
             success: false,
             message: 'Inventory Service is unavailable. Please try again later.'
@@ -304,7 +317,7 @@ app.post('/api/orders', async (req, res) => {
     }
 });
 
-// Consistent JSON 404 for unknown routes
+// Return JSON 404 for unknown routes
 app.use((req, res) => {
     return res.status(404).json({
         success: false,
@@ -312,7 +325,7 @@ app.use((req, res) => {
     });
 });
 
-// Graceful shutdown
+// Graceful shutdown handler
 async function shutdown(signal) {
     try {
         console.log(`\n${signal} received: closing DB pool...`);
