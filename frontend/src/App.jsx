@@ -3,10 +3,18 @@ import axios from 'axios';
 import './App.css';
 import logo from './assets/logo.png';
 
+// Frontend entry: single-page app used by shop staff.
+// Responsibilities:
+// - Periodically check backend health (Inventory + Order services)
+// - Show product catalog and manage an order cart (Point of Sale)
+// - Place orders by calling Order Service and refresh product stock
+// - Show order history by querying the Order Service
+
 const INVENTORY_API_BASE_URL = import.meta.env.VITE_INVENTORY_API_BASE_URL || 'http://localhost:5001';
 const ORDER_API_BASE_URL = import.meta.env.VITE_ORDER_API_BASE_URL || 'http://localhost:5002';
 
 function App() {
+  // UI navigation state: 'pos' (Point of Sale) or 'history'
   const [activePage, setActivePage] = useState('pos');
   const [inventoryOnline, setInventoryOnline] = useState(false);
   const [ordersOnline, setOrdersOnline] = useState(false);
@@ -14,6 +22,7 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
+    // Periodically check both backend services to update status pills in the sidebar.
     const checkHealth = async () => {
       const [invResult, orderResult] = await Promise.allSettled([
         axios.get(`${INVENTORY_API_BASE_URL}/`, { timeout: 2000 }),
@@ -58,6 +67,7 @@ function App() {
   );
 }
 
+// Sidebar component: navigation and simple health indicators.
 function Sidebar({ activePage, setActivePage, inventoryOnline, ordersOnline }) {
   return (
     <aside className="sidebar">
@@ -92,6 +102,7 @@ function Sidebar({ activePage, setActivePage, inventoryOnline, ordersOnline }) {
 }
 
 function PointOfSalePage() {
+  // Product catalog and cart state for the POS page
   const [products, setProducts] = useState([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [productsError, setProductsError] = useState('');
@@ -103,6 +114,7 @@ function PointOfSalePage() {
   const [placeOrderError, setPlaceOrderError] = useState('');
   const [placeOrderSuccess, setPlaceOrderSuccess] = useState('');
 
+  // Fetch product list from Inventory Service and normalize fields.
   const fetchProducts = async () => {
     const response = await axios.get(`${INVENTORY_API_BASE_URL}/api/products`, {
       timeout: 8000,
@@ -120,6 +132,7 @@ function PointOfSalePage() {
   useEffect(() => {
     let cancelled = false;
 
+    // Load products on mount. Keeps isLoadingProducts and productsError in sync.
     const refreshProducts = async () => {
       setIsLoadingProducts(true);
       setProductsError('');
@@ -143,6 +156,7 @@ function PointOfSalePage() {
     };
   }, []);
 
+  // Adjust cart items if the product catalog changes (e.g., stock updates).
   useEffect(() => {
     if (!Array.isArray(products) || products.length === 0) return;
 
@@ -250,6 +264,8 @@ function PointOfSalePage() {
         })),
       };
 
+      // Call Order Service to create the order. Order Service will call Inventory
+      // to validate/deduct stock atomically before Order is created.
       const response = await axios.post(`${ORDER_API_BASE_URL}/api/orders`, payload, {
         timeout: 12000,
       });
@@ -259,6 +275,7 @@ function PointOfSalePage() {
       setCartItems([]);
       setCustomerName('');
 
+      // Refresh products immediately after a successful order so UI shows updated stock.
       await refreshProductsNow();
     } catch (err) {
       const apiMessage =
@@ -426,6 +443,7 @@ function Cart({
 }
 
 function OrderHistoryPage() {
+  // Order history view state: orders, loading flag and per-product name map.
   const [orders, setOrders] = useState([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const [ordersError, setOrdersError] = useState('');
@@ -444,6 +462,8 @@ function OrderHistoryPage() {
   useEffect(() => {
     let cancelled = false;
 
+    // Load orders and product names in parallel. Product names are used to
+    // show friendly item labels in the expanded details view.
     const loadOrders = async () => {
       setIsLoadingOrders(true);
       setOrdersError('');
