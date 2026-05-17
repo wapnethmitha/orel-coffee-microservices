@@ -25,6 +25,17 @@ Execute the scripts in the `/db` folder using MySQL Workbench or the command lin
 2. Run `db/order_schema.sql` to create `coffee_orders`.
 3. Run `db/seed.sql` to populate initial product data.
 
+If you prefer explicit CLI commands, here are example MySQL commands you can run (adjust `-u` and `-p` as needed):
+
+```bash
+# Create schemas and tables
+mysql -u root -p < db/inventory_schema.sql
+mysql -u root -p < db/order_schema.sql
+
+# Populate seed data (runs against both databases as written in the file)
+mysql -u root -p < db/seed.sql
+```
+
 ### 2. Configuration
 
 In both the `inventory-service` and `order-service` folders:
@@ -76,6 +87,11 @@ Open three separate terminal windows:
 - Synchronous REST communication from Order Service to Inventory Service.
 - Stock updates are done in Inventory Service with an atomic conditional update inside a DB transaction.
 - No authentication/authorization (assessment scope).
+
+- Compensating rollback note: The Order Service attempts a compensating rollback by calling
+  the Inventory Service endpoint `/api/products/release-stock` if the local database
+  transaction fails after inventory was deducted. See the implementation in
+  [order-service/server.js](order-service/server.js) for details and logging behavior.
 
 ## Project Documents
 
