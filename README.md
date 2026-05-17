@@ -104,6 +104,26 @@ Open three separate terminal windows:
 - No automated tests yet.
 - No Docker Compose yet.
 
+## Bonus Features — Status
+
+**Implemented**
+
+- **Transactional Order Creation:** Order Service uses a database transaction and bulk inserts for `order_items` to ensure atomic local persistence.
+- **Immediate Inventory Deduction (atomic):** Inventory Service validates and deducts stock inside a database transaction (uses `SELECT ... FOR UPDATE` then `UPDATE`) to prevent race conditions.
+- **Compensating Rollback (attempted):** If Order Service fails to persist locally after Inventory has deducted stock, it attempts a compensating call to `/api/products/release-stock` to restore inventory and logs failures for operator visibility. Note: this repository does not include a server-side implementation of `/api/products/release-stock`; the Order Service attempts the call but the Inventory Service here does not handle it.
+- **Health Checks:** Both services expose a `/` health endpoint returning service + DB liveness.
+- **Basic Request Validation:** Order Service enforces payload shape and type checks for core endpoints.
+- **Performance Optimization:** Bulk `INSERT` for order items to reduce round-trips.
+
+**Not Implemented / Optional**
+
+- **Reservation / Hold Workflow:** NOT implemented. The system performs immediate deduction in Inventory; there is no separate reserve/confirm flow, reservation table, or order `PENDING` status with later confirmation.
+- **Redux / Advanced Frontend State Management:** Not included.
+- **Comprehensive Input Sanitisation:** Basic validation exists; full sanitisation is not implemented.
+- **Automated Tests:** Unit/integration tests are not provided.
+- **Docker Compose / One‑command Setup:** Not provided.
+- **Structured Logging / Monitoring:** Only console logging is present; no centralized logging or metrics.
+
 ## Branching Strategy
 
 The repository uses clear, descriptive commit prefixes to show progress over time.
