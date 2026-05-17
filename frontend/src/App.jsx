@@ -3,18 +3,25 @@ import axios from 'axios';
 import './App.css';
 import logo from './assets/logo.png';
 
-// Frontend entry: single-page app used by shop staff.
-// Responsibilities:
-// - Periodically check backend health (Inventory + Order services)
-// - Show product catalog and manage an order cart (Point of Sale)
-// - Place orders by calling Order Service and refresh product stock
-// - Show order history by querying the Order Service
+// Frontend entry point for the shop staff single-page app.
+// High-level responsibilities:
+// - Check both backend services for liveness and display status.
+// - Load the product catalog from Inventory Service and present it in a POS grid.
+// - Manage a simple in-memory cart and send a create-order request to Order Service.
+// - Display order history by reading from the Order Service.
 
+// Service base URLs. In development use Vite env vars, otherwise default to localhost.
 const INVENTORY_API_BASE_URL = import.meta.env.VITE_INVENTORY_API_BASE_URL || 'http://localhost:5001';
 const ORDER_API_BASE_URL = import.meta.env.VITE_ORDER_API_BASE_URL || 'http://localhost:5002';
 
+/*
+  App() - Root component
+  - Manages top-level UI routing between POS and Order History
+  - Performs lightweight service health checks and passes flags to the Sidebar
+  - Keeps top-level state minimal; page-specific logic lives in child components
+*/
 function App() {
-  // UI navigation state: 'pos' (Point of Sale) or 'history'
+  // UI navigation state: 'pos' (Point of Sale) or 'history' (Order History view)
   const [activePage, setActivePage] = useState('pos');
   const [inventoryOnline, setInventoryOnline] = useState(false);
   const [ordersOnline, setOrdersOnline] = useState(false);
@@ -67,7 +74,8 @@ function App() {
   );
 }
 
-// Sidebar component: navigation and simple health indicators.
+// Sidebar component: navigation + live health indicators
+// - `inventoryOnline` and `ordersOnline` are boolean flags produced by App().
 function Sidebar({ activePage, setActivePage, inventoryOnline, ordersOnline }) {
   return (
     <aside className="sidebar">
@@ -90,6 +98,7 @@ function Sidebar({ activePage, setActivePage, inventoryOnline, ordersOnline }) {
         </div>
       </nav>
       <div className="status-bar">
+        {/* Simple status pills that reflect the health checks in App(). */}
         <div className={`status-pill ${inventoryOnline ? 'online' : 'offline'}`}>
           <span className="dot" /> Inventory API
         </div>
@@ -100,6 +109,12 @@ function Sidebar({ activePage, setActivePage, inventoryOnline, ordersOnline }) {
     </aside>
   );
 }
+
+/*
+  Sidebar() - Left navigation and status panel
+  - Renders brand, page navigation and simple status pills
+  - Receives `inventoryOnline`/`ordersOnline` to visually indicate backend liveness
+*/
 
 function PointOfSalePage() {
   // Product catalog and cart state for the POS page
@@ -114,7 +129,12 @@ function PointOfSalePage() {
   const [placeOrderError, setPlaceOrderError] = useState('');
   const [placeOrderSuccess, setPlaceOrderSuccess] = useState('');
 
-  // Fetch product list from Inventory Service and normalize fields.
+  /*
+    fetchProducts()
+    - Calls Inventory Service `/api/products` to retrieve the product catalog.
+    - Normalizes fields so the UI always sees { id, name, price, stock }.
+    - Throws on HTTP/network failures so callers can show an error.
+  */
   const fetchProducts = async () => {
     const response = await axios.get(`${INVENTORY_API_BASE_URL}/api/products`, {
       timeout: 8000,
@@ -125,6 +145,7 @@ function PointOfSalePage() {
       id: Number(row.id),
       name: String(row.name ?? ''),
       price: Number(row.price),
+      // Normalize column names: some DBs call it `stock_quantity`, others `stock`.
       stock: Number(row.stock_quantity ?? row.stock ?? 0),
     }));
   };
@@ -133,6 +154,7 @@ function PointOfSalePage() {
     let cancelled = false;
 
     // Load products on mount. Keeps isLoadingProducts and productsError in sync.
+    // `refreshProducts` wraps `fetchProducts` and updates loading/error state.
     const refreshProducts = async () => {
       setIsLoadingProducts(true);
       setProductsError('');
@@ -156,7 +178,12 @@ function PointOfSalePage() {
     };
   }, []);
 
-  // Adjust cart items if the product catalog changes (e.g., stock updates).
+  /*
+    Adjust cart when product catalog changes
+    - Keeps cart item metadata (name, price, maxQuantity) in-sync with the
+      latest inventory snapshot.
+    - Clamps any cart quantities to available stock to avoid placing invalid orders.
+  */
   useEffect(() => {
     if (!Array.isArray(products) || products.length === 0) return;
 
@@ -197,6 +224,11 @@ function PointOfSalePage() {
     }
   };
 
+  /*
+    addToCart(product)
+    - Adds a product to the local cart or increments existing quantity.
+    - Protects against adding products with zero stock.
+  */
   const addToCart = (product) => {
     if (!product || product.stock <= 0) return;
 
@@ -248,6 +280,13 @@ function PointOfSalePage() {
 
   const cartTotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
+  /*
+    placeOrder()
+    - Builds the minimal payload expected by Order Service and POSTs it.
+    - Disables repeated submissions via `isPlacingOrder`.
+    - On success: clears cart, shows success message and refreshes products.
+    - On failure: surfaces the API error to the user.
+  */
   const placeOrder = async () => {
     if (cartItems.length === 0 || isPlacingOrder) return;
 
@@ -278,6 +317,7 @@ function PointOfSalePage() {
       // Refresh products immediately after a successful order so UI shows updated stock.
       await refreshProductsNow();
     } catch (err) {
+      // Prefer structured API messages, but fall back to a generic one.
       const apiMessage =
         err?.response?.data?.message ||
         err?.response?.data?.inventory?.message ||
@@ -307,6 +347,7 @@ function PointOfSalePage() {
             )}
 
             {!isLoadingProducts && !productsError && products.map((p) => (
+              // Render each product as a card with an Add-to-Cart action
               <ProductCard key={p.id} product={p} onAddToCart={addToCart} />
             ))}
           </div>
@@ -329,6 +370,12 @@ function PointOfSalePage() {
   );
 }
 
+/*
+  ProductCard({ product, onAddToCart })
+  - Presentational component for a single product
+  - Shows name, price, stock and an Add-to-Cart button
+  - `onAddToCart` is an optional callback provided by the parent to mutate cart state
+*/
 function ProductCard({ product, onAddToCart }) {
   const getStockClass = (stock) => {
     if (stock === 0) return 'zero';
@@ -356,6 +403,12 @@ function ProductCard({ product, onAddToCart }) {
   );
 }
 
+/*
+  Cart(props)
+  - Displays the current cart contents and controls to increment/decrement/remove items.
+  - Receives all actions as callbacks so the parent keeps the authoritative state.
+  - Also renders the place order button and any API error/success messages.
+*/
 function Cart({
   items,
   customerName,
@@ -442,6 +495,12 @@ function Cart({
   );
 }
 
+/*
+  OrderHistoryPage()
+  - Fetches a list of orders from the Order Service and displays them in a table.
+  - Also fetches the product catalog to map product IDs to friendly names.
+  - Supports expanding individual orders to show item-level details.
+*/
 function OrderHistoryPage() {
   // Order history view state: orders, loading flag and per-product name map.
   const [orders, setOrders] = useState([]);
@@ -469,6 +528,8 @@ function OrderHistoryPage() {
       setOrdersError('');
 
       try {
+        // Load orders and product catalog in parallel. Product names are used to
+        // show friendly labels in the expanded order detail rows.
         const [ordersResult, productsResult] = await Promise.allSettled([
           axios.get(`${ORDER_API_BASE_URL}/api/orders`, { timeout: 8000 }),
           axios.get(`${INVENTORY_API_BASE_URL}/api/products`, { timeout: 8000 }),
@@ -477,14 +538,17 @@ function OrderHistoryPage() {
         if (cancelled) return;
 
         if (ordersResult.status !== 'fulfilled') {
+          // Propagate the underlying network or API error so catch() handles it.
           throw ordersResult.reason;
         }
 
+        // Normalize the orders array returned by the API
         const rows = Array.isArray(ordersResult.value?.data?.orders)
           ? ordersResult.value.data.orders
           : [];
         setOrders(rows);
 
+        // Build a simple id->name map for display in the expanded details
         if (productsResult.status === 'fulfilled') {
           const productRows = Array.isArray(productsResult.value?.data)
             ? productsResult.value.data
